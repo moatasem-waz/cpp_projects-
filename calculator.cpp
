@@ -1,0 +1,200 @@
+#include <cmath>
+#include <cstdlib>
+#include <iomanip>
+#include <iostream>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+
+class Parser {
+public:
+    explicit Parser(std::string_view input) : input_(input) {}
+
+    long double evaluate() {
+        long double result = parseExpression();
+        skipSpaces();
+
+        if (position_ != input_.size()) {
+            throw std::runtime_error("يوجد رمز غير متوقع في التعبير.");
+        }
+        return result;
+    }
+
+private:
+    std::string_view input_;
+    std::size_t position_ = 0;
+
+    void skipSpaces() {
+        while (position_ < input_.size() &&
+               (input_[position_] == ' ' || input_[position_] == '\t')) {
+            ++position_;
+        }
+    }
+
+    bool consume(char expected) {
+        skipSpaces();
+        if (position_ < input_.size() && input_[position_] == expected) {
+            ++position_;
+            return true;
+        }
+        return false;
+    }
+
+    long double parseExpression() {
+        long double value = parseTerm();
+
+        while (true) {
+            if (consume('+')) {
+                value += parseTerm();
+            } else if (consume('-')) {
+                value -= parseTerm();
+            } else {
+                break;
+            }
+            checkFinite(value);
+        }
+        return value;
+    }
+
+    long double parseTerm() {
+        long double value = parseUnary();
+
+        while (true) {
+            if (consume('*')) {
+                value *= parseUnary();
+            } else if (consume('/')) {
+                long double divisor = parseUnary();
+                if (divisor == 0.0L) {
+                    throw std::runtime_error("لا يمكن القسمة على صفر.");
+                }
+                value /= divisor;
+            } else {
+                break;
+            }
+            checkFinite(value);
+        }
+        return value;
+    }
+
+    long double parseUnary() {
+        if (consume('+')) return parseUnary();
+        if (consume('-')) return -parseUnary();
+        return parsePrimary();
+    }
+
+    long double parsePrimary() {
+        if (consume('(')) {
+            long double value = parseExpression();
+            if (!consume(')')) {
+                throw std::runtime_error("قوس إغلاق مفقود.");
+            }
+            return value;
+        }
+        return parseNumber();
+    }
+
+    long double parseNumber() {
+        skipSpaces();
+
+        if (position_ >= input_.size()) {
+            throw std::runtime_error("كان متوقعًا إدخال رقم.");
+        }
+
+        const char* start = input_.data() + position_;
+        char* end = nullptr;
+        long double value = std::strtold(start, &end);
+
+        if (end == start) {
+            throw std::runtime_error("صيغة التعبير غير صحيحة.");
+        }
+
+        position_ += static_cast<std::size_t>(end - start);
+        checkFinite(value);
+        return value;
+    }
+
+    static void checkFinite(long double value) {
+        if (!std::isfinite(value)) {
+            throw std::runtime_error("النتيجة أكبر من المجال العددي المسموح.");
+        }
+    }
+};
+
+static bool runSelfTests() {
+    struct Test {
+        const char* expression;
+        long double expected;
+    };
+
+    const Test tests[] = {
+        {"2 + 3 * 4", 14.0L},
+        {"(2 + 3) * 4", 20.0L},
+        {"-5 + 2", -3.0L},
+        {"10 / 4", 2.5L},
+        {"2 * -(3 + 4)", -14.0L},
+        {"1.5 + 2.25", 3.75L}
+    };
+
+    for (const Test& test : tests) {
+        try {
+            long double actual = Parser(test.expression).evaluate();
+            if (std::fabs(actual - test.expected) > 1e-12L) {
+                std::cerr << "فشل الاختبار: " << test.expression
+                          << " | المتوقع: " << test.expected
+                          << " | الناتج: " << actual << '\n';
+                return false;
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "فشل الاختبار: " << test.expression
+                      << " | " << e.what() << '\n';
+            return false;
+        }
+    }
+
+    try {
+        (void)Parser("1 / 0").evaluate();
+        std::cerr << "فشل اختبار القسمة على صفر.\n";
+        return false;
+    } catch (const std::runtime_error&) {
+        // النتيجة المتوقعة: رفض القسمة على صفر.
+    }
+
+    std::cout << "نجحت جميع الاختبارات.\n";
+    return true;
+}
+
+int main(int argc, char* argv[]) {
+    if (argc == 2 && std::string(argv[1]) == "--test") {
+        return runSelfTests() ? 0 : 1;
+    }
+
+    std::cout << "آلة حاسبة C++\n"
+              << "العمليات: + - * / والأقواس\n"
+              << "اكتب q للخروج.\n\n";
+
+    std::string line;
+
+    while (true) {
+        std::cout << "> ";
+        if (!std::getline(std::cin, line)) {
+            break;
+        }
+
+        if (line == "q" || line == "Q") {
+            break;
+        }
+
+        if (line.empty()) {
+            continue;
+        }
+
+        try {
+            long double result = Parser(line).evaluate();
+            std::cout << std::setprecision(15) << result << '\n';
+        } catch (const std::exception& e) {
+            std::cout << "خطأ: " << e.what() << '\n';
+        }
+    }
+
+    return 0;
+}
